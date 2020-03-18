@@ -1,0 +1,180 @@
+'
+Lab 7 
+Course: FU
+Lab instructor: Karina Shyrokykh
+Date: 19 March, 2020
+Stockholm University
+'
+
+# To clean up the environment
+rm(list = ls())
+
+### Step 1. Loading Data
+my_data <- read.csv("V-Dem-CY-Core-v8.csv", header=T)
+
+
+# Install packages required for TSCS analysis 
+install.packages("tseries")
+install.packages("lmtest")
+install.packages("plm")
+install.packages("Formula")
+#install.packages("simcf") #from the webpage
+install.packages("dummies")
+install.packages("arm")
+install.packages("pcse")
+install.packages("nlme")
+install.packages("stargazer") 
+install.packages("pastecs")
+
+library(pastecs)
+library(stargazer)
+library(MASS)
+library(tseries)
+library(lmtest)
+library(nlme)
+library(lme4)
+library(plm)
+library(Formula)
+library(arm) 
+library(pcse)
+library(tseries)
+#library(simcf)
+library(dummies)
+library(nlme)
+library (ggplot2)
+
+# We are interested in analysing the northern countries
+newdata<-  my_data[(my_data$country_name %in% c("Sweden","Denmark","Norway", "Finland", "Island")),]
+short_newdata<-  newdata[(newdata$year %in% c(1990:2018)),]
+
+# If you assume that treatment takes some time to trigger an effect, use lag.
+############# just run it ########
+# Source: https://github.com/chrisadolph/tile-simcf/blob/master/simcf/R/lagpanel.R
+
+lagpanel <- function(x,c,t,lagnum) {
+  outclass <- "matrix"
+  if (any(class(x)=="data.frame")) outclass <- "data.frame"
+  x <- as.matrix(x)
+  outnames <- colnames(x)
+  c <- as.matrix(c)
+  t <- as.matrix(t)
+  listc <- unique(c)
+  outmat <- matrix(NA,nrow=nrow(x),ncol=ncol(x))
+  runningtotal <- 0
+  for (i in 1:nrow(listc)) {
+    numtper <- length(unique(t[c==listc[i,]]))
+    xc <- as.matrix(x[c==listc[i,],])
+    if (nrow(xc)>numtper)
+      stop(paste("Duplicate time periods in data for unit", listc[i]))
+    if (numtper>lagnum) {
+      outmat[(runningtotal+1+lagnum):(runningtotal + numtper),] <-
+        xc[1:(nrow(xc)-lagnum),]
+    }
+    runningtotal <- runningtotal + numtper
+  }
+  if (outclass=="data.frame") outmat <- as.data.frame(outmat)
+  colnames(outmat) <- outnames
+  outmat
+}
+#############
+
+# To create lags:       and differences now to correctly listwise delete
+attach(short_newdata)
+
+# read on the package https://www.rdocumentation.org/packages/prodest/versions/1.0.1/topics/lagPanel
+# append a vector to a data frame
+
+short_newdata["frefairlag1y"] <- lagpanel(short_newdata$v2xel_frefair, short_newdata$country_name, short_newdata$year, 1)
+short_newdata["frefairdiff1y"] <- short_newdata$v2xel_frefair - short_newdata$frefairlag1y
+short_newdata["frefairdifflag1"] <- lagpanel(short_newdata$frefairdiff1y, short_newdata$country_name, short_newdata$year, 1)
+short_newdata["frefairdifflag2"] <- lagpanel(short_newdata$frefairdiff1y, short_newdata$country_name, short_newdata$year, 2)
+
+names <- c("country_name","year","v2xel_frefair","v2x_delibdem", "v2x_egaldem",
+           "v2x_gender","frefairlag1y","frefairdiff1y","frefairdifflag1", "frefairdifflag2")
+
+# create a small dataset that you will work with removing the rest of the variables
+my_data_subset <- short_newdata[names]
+head(my_data_subset)
+
+attach(my_data_subset)
+
+# Create dummies
+#############################
+makeFEdummies <- function(unit,names=NULL) {
+  fe <- model.matrix(~factor(unit)-1)
+  if (is.null(names)) {
+    colnames(fe) <- unique(as.character(unit))
+  } else {
+    colnames(fe) <- names
+  }
+  fe
+}
+############################
+attach(my_data_subset)
+countrylist <-unique(my_data_subset$country_name)
+fe <- makeFEdummies(my_data_subset$country_name)
+n <- length(countrylist)
+
+# add the dummies to the dataset
+working_data <- cbind(my_data_subset, fe)
+
+
+#######################################################################
+######################Step 1. Data inspection##########################
+#######################################################################
+
+# # Check for time series properties of y(it)
+
+# # TS plot in each country 
+# Plots individual plots for each of the countries separately 
+
+for(i in 1:length(countrylist))    # specify what countries you want to display
+{                                  # open loop
+  country <- countrylist[i]        # pick a country from the list
+  filename <-paste ("freefair_", country,".pdf", sep="")   # create the format of file name
+  pdf(filename, width=6, height=3.25)                      # open an empty pdf file
+  plot(working_data$year[working_data$country_name == country],      #  specify the x-axis, filter by country name, if not satisfied, data are ignored
+       working_data$v2xel_frefair[working_data$country_name == country], # specify the y-axis
+       ylab="Free and fair", 
+       xlab ="Year",
+       main = paste(country),
+       xlim=c(1990, 2017), ylim=c(0.93, 0.99))
+  dev.off()
+}
+
+# A correlogram (also called Auto Correlation Function ACF Plot or Autocorrelation plot) 
+# is a visual way to show serial correlation in data that changes over time (i.e. time series data). 
+# Serial correlation (also called autocorrelation) is where an error at one point in time travels to a subsequent point in time.
+
+# ACF plot in each country 
+for(i in 1:length(countrylist)) {
+  country <- countrylist[i]
+  filename <-paste("ACFfreefair", country,".pdf", sep="")
+  pdf(filename, width=6, height=3.25)
+  acf(working_data$v2xel_frefair [working_data$country_name == country],
+      ylab="Free and fair", 
+      xlab ="Year",
+      main = paste(country)  )
+  dev.off()
+}
+
+# We detect autocorrelation
+
+
+# PACF plot in each country  
+for(i in 1:length(countrylist)) {
+  country <- countrylist[i]
+  filename <-paste("PACFfreefair", country,".pdf", sep="")
+  pdf(filename, width=6, height=3.25)
+  pacf(working_data$v2xel_frefair [working_data$country_name == country],
+       ylab="Free and fair", 
+       xlab ="Year",
+       main = paste(country) )
+  dev.off()
+}
+
+# The default plot for PACF is a bit better than for ACF, it shows that we need to introduce lag of 1 year
+# the partial autocorrelation at lag-1 is very high (it equals the ACF at lag-1), 
+# but the other values at lags > 1 are relatively small, unlike what we saw for the ACF. 
+# SO, we make a conclusion of introducing lag of one year into the model.
+
